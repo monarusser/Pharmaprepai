@@ -100,5 +100,3 @@ if main_topic:
                             st.error(f"Incorrect ❌. Correct answer: {data['answer']}\nSource: {data['source']}")
             else:
                 st.warning("No questions available for this type yet.")
-
-
