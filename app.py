@@ -1,52 +1,60 @@
 import streamlit as st
 import openai
+import random
 import re
 
-# OpenAI API key from Streamlit secrets
+# Load OpenAI API key from Streamlit secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Topics and revision summaries
+# Set page configuration
+st.set_page_config(page_title="Pharma Prep", page_icon="💊", layout="centered")
+
+# Topic revision summaries
 topics = {
     "Cardiovascular": "Review of hypertension, lipid management, heart failure, anticoagulation...",
     "Musculoskeletal": "Key treatments for arthritis, osteoporosis, gout...",
-    "Infection": "Antibiotics stewardship, common infections, resistance...",
+    "Infection": "Antibiotic stewardship, common infections, resistance...",
     "Endocrine": "Diabetes management, thyroid disorders, adrenal insufficiency...",
     "Respiratory": "Asthma, COPD, inhaler techniques...",
-    "Gastrointestinal": "Peptic ulcers, IBS, liver diseases...",
+    "Gastrointestinal": "Peptic ulcer disease, IBS, liver pathology...",
     "Genito-urinary": "UTIs, contraception, prostate disorders...",
-    "Nervous System": "Epilepsy, Parkinson’s, migraine management...",
-    "Cancer/Immuno": "Chemotherapy basics, immunosuppressants...",
+    "Nervous System": "Epilepsy, Parkinson’s disease, migraine management...",
+    "Cancer/Immuno": "Chemotherapy fundamentals, immunosuppressants...",
     "Eye/Ear/Nose/Skin": "Common eye infections, dermatitis, ENT conditions...",
-    "Nutrition/Blood": "Anaemia, vitamin deficiencies, anticoagulants...",
+    "Nutrition/Blood": "Anaemia, vitamin deficiencies, anticoagulant dosing...",
     "Vaccination": "UK immunisation schedule, vaccine types...",
-    "Emergency Meds": "Anaphylaxis, overdose, emergency protocols...",
-    "Pharmacy Law & Ethics": "GPhC standards, prescription regulations...",
-    "Calculations": "Dose calculations, conversions, IV drip rates..."
+    "Emergency Meds": "Anaphylaxis management, overdose protocols, emergency drugs...",
+    "Pharmacy Law & Ethics": "GPhC standards, prescribing legislation, ethical scenarios...",
+    "Calculations": "Dose calculations, unit conversions, IV infusion rates..."
 }
 
-# Session state setup
+# Initialize session state
 if 'page' not in st.session_state:
     st.session_state.page = 'home'
-
 if 'selected_topic' not in st.session_state:
     st.session_state.selected_topic = None
+if 'raw_text' not in st.session_state:
+    st.session_state.raw_text = None
 
-# ------------------- UI Functions --------------------
-
+# UI: Homepage
 def show_homepage():
     st.title("💊 Pharma Prep")
-    st.write("Select a topic to start revising:")
+    st.markdown("""
+    Welcome to **Pharma Prep**, your UK pharmacy exam revision assistant.
+
+    Select a topic to review and practice.
+    """)
     cols = st.columns(3)
     for i, topic in enumerate(topics.keys()):
         if cols[i % 3].button(topic):
             st.session_state.selected_topic = topic
             st.session_state.page = 'summary'
 
+# UI: Revision Summary
 def show_summary():
     topic = st.session_state.selected_topic
     st.header(f"Revision Summary: {topic}")
     st.write(topics[topic])
-
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Start Questions"):
@@ -56,19 +64,22 @@ def show_summary():
             st.session_state.page = 'home'
             st.session_state.selected_topic = None
 
+# Prompt generation
 def generate_prompt(topic, question_type):
     if question_type == "Calculation":
-        style = ("Generate a pharmacy calculation question based on UK BNF/NICE guidelines. "
-                 "Include the question, the correct numeric answer, and a step-by-step working out "
-                 "explanation. Cite the guideline source.")
+        style = (
+            "Generate a pharmacy calculation question based on UK BNF/NICE guidelines. "
+            "Include the question, the correct numeric answer, and a step-by-step working out explanation. Cite the guideline source."
+        )
     elif question_type == "Flashcard":
         style = "Generate a flashcard-style question and answer using UK NICE/BNF guidelines."
     elif question_type == "Multiple Choice":
-        style = ("Generate a multiple choice pharmacy exam question with 4 options and one correct answer. "
-                 "Use only NICE or BNF UK guidelines. Label the correct option and cite the source.")
+        style = (
+            "Generate a multiple choice pharmacy exam question with 4 options and one correct answer. "
+            "Use only NICE or BNF UK guidelines. Label the correct option and cite the source."
+        )
     else:
         style = "Generate a short-answer pharmacy exam question that requires a 1–2 word answer. Cite the UK guideline source."
-
     return f"""
 You are a pharmacy exam tutor helping students revise for UK pharmacy exams (GPhC, pre-reg, etc.).
 
@@ -81,6 +92,7 @@ Only show one question. Cite the NICE, BNF, or MHRA guideline (e.g. BNF Chapter 
 Do not create US content. Use UK guidelines only.
 """
 
+# OpenAI call
 def get_openai_response(prompt):
     try:
         response = openai.chat.completions.create(
@@ -91,130 +103,105 @@ def get_openai_response(prompt):
     except Exception as e:
         return f"⚠️ Error: {e}"
 
-def parse_mcq(question_text):
-    lines = question_text.split('\n')
-    question = ""
-    options = {}
-    answer = None
-    source = None
-    option_letters = ['A', 'B', 'C', 'D']
-
+# Parsing functions
+def parse_mcq(text):
+    lines = text.split('\n')
+    question, options, answer, source = "", {}, None, None
     for line in lines:
         if line.startswith("Question:"):
-            question = line[len("Question:"):].strip()
-        elif any(line.startswith(f"{opt})") for opt in option_letters):
-            for opt in option_letters:
-                if line.startswith(f"{opt})"):
-                    options[opt] = line[len(f"{opt})"):].strip()
+            question = line.split("Question:")[1].strip()
+        elif any(line.startswith(f"{c})") for c in ['A','B','C','D']):
+            letter = line[0]
+            options[letter] = line.split(f"{letter})")[1].strip()
         elif line.startswith("Answer:"):
-            answer = line[len("Answer:"):].strip()
+            answer = line.split("Answer:")[1].strip()
         elif line.startswith("Source:"):
-            source = line[len("Source:"):].strip()
-
+            source = line.split("Source:")[1].strip()
     return question, options, answer, source
 
 def parse_calculation(text):
-    question = None
-    answer = None
-    working_out = None
-    source = None
-
     lines = text.split('\n')
-    temp_working_lines = []
-    in_working_out = False
-
+    question, answer, working_out, source = None, None, [], None
+    in_work = False
     for line in lines:
         if line.startswith("Question:"):
-            question = line[len("Question:"):].strip()
+            question = line.split("Question:")[1].strip()
         elif line.startswith("Answer:"):
-            answer = line[len("Answer:"):].strip()
+            answer = line.split("Answer:")[1].strip()
         elif line.startswith("Working out:"):
-            in_working_out = True
-            temp_working_lines.append(line[len("Working out:"):].strip())
+            in_work = True
+            working_out.append(line.split("Working out:")[1].strip())
         elif line.startswith("Source:"):
-            in_working_out = False
-            source = line[len("Source:"):].strip()
-        else:
-            if in_working_out:
-                temp_working_lines.append(line.strip())
+            in_work = False
+            source = line.split("Source:")[1].strip()
+        elif in_work:
+            working_out.append(line.strip())
+    return question, answer, "\n".join(working_out), source
 
-    working_out = "\n".join(temp_working_lines).strip()
-    return question, answer, working_out, source
-
+# UI: Quiz page
 def show_quiz():
-    topic = st.session_state.selected_topic
-    st.header(f"Questions on {topic}")
-
-    question_type = st.selectbox("Choose question type:", ["Multiple Choice", "Short Answer", "Flashcard", "Calculation"])
+    st.header(f"Questions on {st.session_state.selected_topic}")
+    question_type = st.selectbox("Question Type:", ["Multiple Choice","Short Answer","Flashcard","Calculation"])
 
     if st.button("🎯 Generate Question"):
-        with st.spinner("Generating question..."):
-            prompt = generate_prompt(topic, question_type)
-            raw_text = get_openai_response(prompt)
+        prompt = generate_prompt(st.session_state.selected_topic, question_type)
+        st.session_state.raw_text = get_openai_response(prompt)
 
-        if "Error" in raw_text:
-            st.error(raw_text)
-            return
-
-        # Debug: Show raw AI response for transparency
-        st.text_area("### Raw AI response", raw_text, height=200)
+    raw = st.session_state.raw_text
+    if raw:
+        st.text_area("### Raw AI response", raw, height=200)
 
         if question_type == "Multiple Choice":
-            question, options, answer, source = parse_mcq(raw_text)
-            st.markdown(f"### 📝 {question}")
-            user_choice = st.radio("Select your answer:", list(options.values()), key="mcq_radio")
-
+            if "mcq_data" not in st.session_state:
+                q, opts, ans, src = parse_mcq(raw)
+                st.session_state.mcq_data = {"question": q, "options": opts, "answer": ans, "source": src}
+            data = st.session_state.mcq_data
+            st.markdown(f"**{data['question']}**")
+            choice = st.radio("Select your answer:", list(data['options'].values()), key="mcq_choice")
             if st.button("Submit Answer", key="mcq_submit"):
-                selected_opt = None
-                for opt, val in options.items():
-                    if val == user_choice:
-                        selected_opt = opt
-                        break
-                if selected_opt == answer:
-                    st.success(f"Correct! ✅\n\nSource: {source}")
+                sel = next(k for k,v in data['options'].items() if v==choice)
+                if sel == data['answer']:
+                    st.success(f"Correct! ✅\nSource: {data['source']}")
                 else:
-                    st.error(f"Incorrect. ❌ The correct answer is {answer}) {options[answer]}\n\nSource: {source}")
+                    st.error(f"Incorrect. ❌ The correct answer is {data['answer']}) {data['options'][data['answer']]}\nSource: {data['source']}")
 
         elif question_type == "Calculation":
-            question, correct_answer, working_out, source = parse_calculation(raw_text)
-            st.markdown(f"### 📝 {question}")
-
-            user_input = st.text_input("Enter your numeric answer:", key="calc_input")
-
+            if "calc_data" not in st.session_state:
+                q,a,wo,src = parse_calculation(raw)
+                st.session_state.calc_data = {"question": q, "answer": a, "working_out": wo, "source": src}
+            data = st.session_state.calc_data
+            st.markdown(f"**{data['question']}**")
+            user_ans = st.text_input("Enter your numeric answer:", key="calc_input")
             if st.button("Submit Answer", key="calc_submit"):
                 try:
-                    user_val = float(user_input.strip())
-                    correct_val = float(re.findall(r"[-+]?\d*\.\d+|\d+", correct_answer)[0])
-                    if abs(user_val - correct_val) < 0.01:
-                        st.success(f"Correct! ✅\n\nWorking out:\n{working_out}\n\nSource: {source}")
+                    u = float(user_ans.strip())
+                    c = float(re.findall(r"[-+]?\d*\.\d+|\d+", data['answer'])[0])
+                    if abs(u-c) < 0.01:
+                        st.success(f"Correct! ✅\nWorking out:\n{data['working_out']}\nSource: {data['source']}")
                     else:
-                        st.error(f"Incorrect. ❌ The correct answer is {correct_answer}\n\nWorking out:\n{working_out}\n\nSource: {source}")
-                except Exception:
+                        st.error(f"Incorrect. ❌ The correct answer is {data['answer']}\nWorking out:\n{data['working_out']}\nSource: {data['source']}")
+                except:
                     st.error("Please enter a valid numeric answer.")
 
         else:
-            # For Short Answer and Flashcard just display the AI response
-            st.markdown("### 📝 Question & Answer")
-            st.markdown(raw_text)
+            st.markdown(f"**Question & Answer**")
+            st.markdown(raw)
 
-# Main app navigation
-def main():
-    if st.session_state.page == 'home':
-        show_homepage()
-    elif st.session_state.page == 'summary':
-        show_summary()
-    elif st.session_state.page == 'quiz':
-        show_quiz()
+# Main navigation
+if st.session_state.page == 'home':
+    show_homepage()
+elif st.session_state.page == 'summary':
+    show_summary()
+elif st.session_state.page == 'quiz':
+    show_quiz()
 
-    # Disclaimer always at bottom
-    st.markdown("""
+# Disclaimer
+st.markdown("""
 ---
-📌 **Disclaimer:**  
-This tool is for revision only and is not regulated by the GPhC or any official body.  
-Information is sourced from **UK NICE**, **BNF**, and **MHRA** guidelines only.  
+📌 **Disclaimer:**
+This tool is for revision only and is not regulated by the GPhC or any official body.
+Information is sourced from **UK NICE**, **BNF**, and **MHRA** guidelines only.
 Always verify from official materials.
-""")
+""", unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
 
