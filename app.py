@@ -25,7 +25,7 @@ if api_key:
         )
 
         try:
-            response = openai.ChatCompletion.create(
+            response = openai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are a helpful pharmacy exam assistant."},
@@ -35,7 +35,7 @@ if api_key:
                 temperature=0.7,
             )
 
-            answer = response['choices'][0]['message']['content']
+            answer = response.choices[0].message.content
             st.markdown("### Question & Answer")
             st.write(answer)
 
